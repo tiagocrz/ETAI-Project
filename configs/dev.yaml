@@ -1,0 +1,11 @@
+# Fast smoke run. Only the keys that differ from config.yaml.
+cv:
+  n_splits: 2
+
+models:
+  classification:
+    params: {n_estimators: 50}
+
+output:
+  models_dir: "models/dev"
+  results_dir: "results/dev"

@@ -1,0 +1,93 @@
+# Single source of truth: every changeable choice. Files in configs/ override only the keys that differ.
+
+seed: 42                                    # passed to every estimator and splitter
+
+data:
+  dir: "data/raw"                           # relative to the repo root
+  train_file: "train.csv"
+  test_file: "test.csv"
+  clientes_file: "clientes.csv"
+  sample_submission_file: "sample_submission.csv"
+  id_column: "ID"
+  group_column: "customer_id"               # customers repeat across rows: CV is grouped on this
+  date_column: "purchase_date"
+  targets:
+    classification: "repeat_purchase_90d"
+    regression: "spend_next_90d"            # never a feature
+  clientes_columns: []                      # columns joined from clientes.csv; empty = no join (TODO: pick in EDA)
+
+cleaning:
+  # Counts are float in train only because of NaNs; cast to float everywhere so dtypes match.
+  float_columns: ["N_ Detalhes", "invoice_count_current_purchase", "customer_tenure_days", "prior_purchase_count",
+                  "purchase_count_30d", "purchase_count_90d", "purchase_count_180d", "purchase_count_365d"]
+
+# X holds exactly these columns (plus any joined clientes columns). IDs, dates and targets never get in.
+features:
+  numeric:
+    # monetary (current purchase)
+    - "Total a Pagar"
+    - "Total Bruto"
+    - "Total Liquido"
+    - "Total Imp_"
+    - "Total Portes"
+    - "Total Desc_ Global"
+    - "Total Desc_ Linha"
+    - "Custo"
+    # details (current purchase)
+    - "N_ Detalhes"
+    - "invoice_count_current_purchase"
+    # history
+    - "days_since_previous_purchase"
+    - "customer_tenure_days"
+    - "prior_purchase_count"
+    - "prior_total_spend"
+    - "prior_mean_purchase_value"
+    - "prior_std_purchase_value"
+    - "prior_min_purchase_value"
+    - "prior_max_purchase_value"
+    - "prior_mean_gap_days"
+    - "prior_std_gap_days"
+    # rolling
+    - "purchase_count_30d"
+    - "spend_30d"
+    - "purchase_count_90d"
+    - "spend_90d"
+    - "purchase_count_180d"
+    - "spend_180d"
+    - "purchase_count_365d"
+    - "spend_365d"
+    # other
+    - "random_noise"                        # kept as a sanity check: should end up useless
+  categorical: ["payment_type", "salesperson", "commercial_zone", "transport_method", "warehouse", "document_series"]
+
+preprocessing:
+  numeric_imputer: "median"
+  categorical_imputer: "most_frequent"
+  encoder: "onehot"                         # onehot | ordinal
+  scaler: "none"                            # none | standard | minmax | robust
+
+selection:
+  type: "passthrough"
+
+# Locked holdout: kept out of CV, used once for the final assessment (TODO: scored by `evaluate`).
+holdout:
+  strategy: "stratified_group"
+  size: 0.2
+
+cv:
+  strategy: "stratified_group"
+  n_splits: 5
+  metrics: ["roc_auc", "accuracy", "f1", "balanced_accuracy"]
+
+models:
+  classification:
+    type: "random_forest"                   # random_forest | dummy
+    params: {n_estimators: 200, random_state: 42, n_jobs: -1, class_weight: balanced}
+  regression:
+    type: null                              # TODO: regression models
+
+threshold: 0.5                              # TODO: choose on out-of-fold probabilities
+
+output:
+  models_dir: "models"
+  results_dir: "results"
