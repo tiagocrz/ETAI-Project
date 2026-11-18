@@ -86,6 +86,16 @@ models:
   regression:
     type: null                              # TODO: regression models
 
+# Optuna tuning (src/tuning.py). Search spaces are keyed by model type; params go to the "model" step.
+tuning:
+  enabled: false
+  n_trials: 50
+  metric: "roc_auc"                         # one of cv.metrics
+  search_spaces:
+    random_forest:
+      n_estimators: {type: int, low: 100, high: 500}
+      max_depth: {type: int, low: 3, high: 20}
+
 threshold: 0.5                              # TODO: choose on out-of-fold probabilities
 
 output:

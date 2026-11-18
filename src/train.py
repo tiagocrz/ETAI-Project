@@ -10,6 +10,7 @@ from src.data import ROOT, join_clientes, load_raw, split_xyg
 from src.evaluate import build_scorers, cross_validate_pipeline
 from src.models import build_pipeline
 from src.splitting import build_cv, split_holdout
+from src.tuning import tune_pipeline
 
 
 def config_hash(cfg: dict) -> str:
@@ -54,17 +55,24 @@ def train(task: str, cfg: dict):
     dev_idx, holdout_idx = split_holdout(X, y, groups, cfg)
     print(f"{len(X)} training rows: {len(dev_idx)} development, {len(holdout_idx)} locked holdout (not used here)")
 
-    cv_scores = cross_validate_pipeline(build_pipeline(task, cfg), X.iloc[dev_idx], y.iloc[dev_idx],
+    best_params = {}
+    if cfg["tuning"]["enabled"]:
+        best_params = tune_pipeline(task, cfg, X.iloc[dev_idx], y.iloc[dev_idx], groups.iloc[dev_idx], build_cv(cfg))
+        print(f"Best params: {best_params}")
+
+    cv_scores = cross_validate_pipeline(build_pipeline(task, cfg).set_params(**best_params),
+                                        X.iloc[dev_idx], y.iloc[dev_idx],
                                         groups.iloc[dev_idx], build_cv(cfg), build_scorers(cfg["cv"]["metrics"]))
     print_scores(cv_scores, f"{cfg['models'][task]['type']}, {cfg['cv']['n_splits']}-fold grouped CV (mean ± std):")
 
-    pipeline = build_pipeline(task, cfg).fit(X, y)
+    pipeline = build_pipeline(task, cfg).set_params(**best_params).fit(X, y)
     meta = {
         "task": task,
         "trained_at": datetime.now().isoformat(timespec="seconds"),
         "config_hash": config_hash(cfg),
         "config": cfg,
         "feature_names": list(pipeline[:-1].get_feature_names_out()),
+        "best_params": best_params,
         "threshold": cfg["threshold"],
         "cv_scores": cv_scores,
     }

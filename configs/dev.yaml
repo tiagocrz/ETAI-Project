@@ -6,6 +6,9 @@ models:
   classification:
     params: {n_estimators: 50}
 
+tuning:
+  n_trials: 5
+
 output:
   models_dir: "models/dev"
   results_dir: "results/dev"
