@@ -1,6 +1,7 @@
 """Model registry and the full Pipeline: features -> prep -> select -> model."""
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 from src.preprocessing import build_preprocessor
@@ -10,6 +11,8 @@ _MODELS = {
     "classification": {
         "dummy": DummyClassifier,
         "random_forest": RandomForestClassifier,
+        "logistic_regression": LogisticRegression,
+        "gradient_boosting": GradientBoostingClassifier,
     },
     "regression": {},  # TODO: add regression models
 }

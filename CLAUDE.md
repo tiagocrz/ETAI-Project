@@ -63,9 +63,9 @@ src/features.py    FeatureEngineer (sklearn transformer)
 src/preprocessing.py  build_preprocessor: impute / encode / scale
 src/selection.py   _SELECTORS + build_selector
 src/models.py      _MODELS["classification"|"regression"] + build_pipeline(task, cfg)
-src/splitting.py   _SPLITTERS + locked test split
+src/splitting.py   _SPLITTERS: stratified_group, time_series (date order, train-test gap in days)
 src/evaluate.py    scorers, CV, nested CV, corrected paired t-test, scoreboard
-src/tuning.py      Optuna tuning
+src/tuning.py      tune_pipeline (basic random search for now, Optuna later)
 src/predict.py     predict_both(): the ONLY place where the two models are combined
 src/client.py      input parsing, new vs returning customer handling
 notebooks/         EDA + experiments: these import from src, never copy its code
@@ -79,7 +79,7 @@ models/, results/  generated outputs
 3. **Cleaning vs. learning.** `cleaning.py` is stateless and keeps every row, so the same code runs on train, test and client input. Anything that learns from data belongs in the Pipeline.
 4. **Two-stage model.** The classifier trains on all rows. The regressor trains only on rows with `repeat_purchase_90d == 1`. At prediction time: `return = P ≥ threshold` (threshold from config, chosen on out-of-fold probabilities), and spend is predicted only when `return == 1`. `predict` and `client` both call `predict_both()`.
 5. **One task-agnostic evaluation core.** CV, tuning and nested CV work for both tasks. They take `groups=`, and only call `predict_proba` for classification.
-6. **Validation.** Default to `StratifiedGroupKFold` grouped on `customer_id`. Also consider a time-ordered split on `purchase_date`, since the test set holds later purchases. The locked holdout is used once, for the final assessment.
+6. **Validation.** No holdout: `test.csv` has no labels, so every labelled row is used. `cv.strategy: stratified_group` (default) runs nested CV with `StratifiedGroupKFold` on `customer_id` in both loops; that is the honest estimate of the tuned model. Then it tunes on all rows, saves the model, and saves `results/best_params_<task>_<model>.json`. `cv.strategy: time_series` re-evaluates those saved params with a date-ordered split and the train-test gap (`cv.time_gap_days`), without tuning or saving: a second opinion on the best few models, since the test set holds later purchases.
 7. **Metadata with every model.** Next to `models/<task>.joblib`, save `models/<task>_meta.json` (merged config, final feature names, threshold, CV scores). The client and SHAP read it.
 8. **Scoreboard.** Append one row per evaluation run to `results/runs_<task>.csv` (timestamp, config hash, model, CV mean/std per metric).
 

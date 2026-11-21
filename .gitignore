@@ -224,7 +224,7 @@ __marimo__/
 data/
 
 # Claude
-.claude/worktrees/
+.claude/
 course_helpers.py
 
 # generated outputs
