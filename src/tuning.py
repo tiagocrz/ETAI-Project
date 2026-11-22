@@ -1,11 +1,12 @@
 """
-Hyperparameter tuning. Called by train.py (final search on all rows) and by nested CV in evaluate.py.
+Hyperparameter and decision-threshold tuning. Called by train.py (final model on all rows) and by nested CV in
+evaluate.py.
 
 For now a basic random search with scikit-learn; it will be replaced by Optuna. Whatever the method,
 keep the signature of `tune_pipeline`, its return value and the `tuning.search_spaces` config format.
 """
 import numpy as np
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import FixedThresholdClassifier, RandomizedSearchCV, TunedThresholdClassifierCV
 
 from src.models import build_pipeline
 
@@ -46,3 +47,29 @@ def tune_pipeline(task: str, cfg: dict, X, y, groups, cv):
                                 scoring=tuning_cfg["metric"], random_state=cfg["seed"], refit=False, n_jobs=-1)
     search.fit(X, y, groups=groups)
     return search.best_params_, float(search.best_score_)
+
+
+_THRESHOLDS = {
+    "tuned": lambda pipeline, cfg, folds: TunedThresholdClassifierCV(
+        pipeline, scoring=cfg["threshold"]["metric"], cv=folds, refit=True, n_jobs=-1),
+    "fixed": lambda pipeline, cfg, folds: FixedThresholdClassifier(pipeline, threshold=cfg["threshold"]["value"]),
+}
+
+
+def fit_with_threshold(pipeline, cfg: dict, X, y, groups, cv):
+    """
+    Wraps a classification pipeline with the decision threshold of `cfg["threshold"]["method"]` and fits it:
+      - tuned: each grouped fold of `cv` fits the pipeline on its training part and scores the cuts on its
+        validation part, so the threshold is never chosen on rows the model was fitted on; the cut that
+        maximizes `threshold.metric` is kept and the pipeline is refit on all rows given;
+      - fixed: the cut is `threshold.value`.
+    The wrapper's `predict` applies the cut and `predict_proba` is unchanged, so the usual scorers work.
+    Returns (fitted wrapper, threshold).
+    """
+    method = cfg["threshold"]["method"]
+    if method not in _THRESHOLDS:
+        raise ValueError(f"Unknown threshold.method: {method}. Options: {list(_THRESHOLDS)}")
+    folds = list(cv.split(X, y, groups))  # precomputed, so the folds stay grouped by customer
+    model = _THRESHOLDS[method](pipeline, cfg, folds).fit(X, y)
+    threshold = model.best_threshold_ if method == "tuned" else model.threshold
+    return model, float(threshold)

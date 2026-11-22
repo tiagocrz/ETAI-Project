@@ -81,7 +81,9 @@ cv:
 models:
   classification:
     type: "random_forest"                   # random_forest | logistic_regression | gradient_boosting | dummy
-    params: {n_estimators: 200, random_state: 42, n_jobs: -1, class_weight: balanced}
+    # n_jobs: 1 because the search, threshold tuning and nested CV already run fits in parallel (n_jobs=-1);
+    # threads inside each forest on top of that oversubscribe the CPU and trigger joblib warnings
+    params: {n_estimators: 200, random_state: 42, n_jobs: 1, class_weight: balanced}
   regression:
     type: null                              # TODO: regression models
 
@@ -96,7 +98,10 @@ tuning:
       n_estimators: {type: int, low: 100, high: 500}
       max_depth: {type: int, low: 2, high: 20}
 
-threshold: 0.5                              # TODO: choose on out-of-fold probabilities
+threshold:
+  method: "tuned"   # tuned: F1-best cut on grouped CV (TunedThresholdClassifierCV) | fixed: use `value`
+  metric: "f1"      # what the tuned threshold maximizes (the Kaggle metric)
+  value: 0.5        # only for method: fixed
 
 output:
   models_dir: "models"

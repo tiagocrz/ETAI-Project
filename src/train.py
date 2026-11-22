@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 
 import joblib
+from sklearn.model_selection import FixedThresholdClassifier
 
 from src.cleaning import clean, drop_duplicate_rows
 from src.data import ROOT, join_clientes, load_raw, split_xyg
@@ -15,7 +16,7 @@ from src.evaluate import (build_scorers, cross_validate_folds, cross_validate_pi
                           summarize_folds)
 from src.models import build_pipeline
 from src.splitting import build_cv
-from src.tuning import tune_pipeline
+from src.tuning import fit_with_threshold, tune_pipeline
 
 
 def config_hash(cfg: dict) -> str:
@@ -69,7 +70,8 @@ def train_stratified_group(task: str, cfg: dict, X, y, groups, dates):
     With tuning: nested CV (StratifiedGroupKFold in both loops) estimates the "tune + fit" procedure
     without optimization bias, then the search runs once more on all rows to pick the final params.
     Without tuning there is nothing to bias, so plain CV is enough. Either way the final model is refit
-    on all rows and saved, together with its best params for a later time-split re-evaluation.
+    on all rows with its decision threshold (`threshold.method`) and saved, together with its best
+    params and threshold for a later time-split re-evaluation.
     """
     scorers = build_scorers(cfg["cv"]["metrics"])
     cv = build_cv(cfg)
@@ -88,42 +90,51 @@ def train_stratified_group(task: str, cfg: dict, X, y, groups, dates):
         cv_scores = cross_validate_pipeline(build_pipeline(task, cfg), X, y, groups, cv, scorers)
         print_scores(cv_scores, f"{model_type}, {cfg['cv']['n_splits']}-fold grouped CV, no tuning (mean ± std):")
 
-    pipeline = build_pipeline(task, cfg).set_params(**best_params).fit(X, y)
+    model, threshold = fit_with_threshold(build_pipeline(task, cfg).set_params(**best_params), cfg, X, y, groups, cv)
+    threshold_score = getattr(model, "best_score_", None)  # only the tuned method has one
+    print(f"Decision threshold ({cfg['threshold']['method']}): {threshold:.3f}"
+          + ("" if threshold_score is None else f", {cfg['threshold']['metric']} {threshold_score:.3f} on grouped CV")
+          + f". All-positive baseline F1: {2 * y.mean() / (1 + y.mean()):.3f}")
     meta = {
         "task": task,
         "trained_at": datetime.now().isoformat(timespec="seconds"),
         "config_hash": config_hash(cfg),
         "config": cfg,
-        "feature_names": list(pipeline[:-1].get_feature_names_out()),
+        "feature_names": list(model.estimator_[:-1].get_feature_names_out()),
         "best_params": best_params,
         "tuning_score_optimistic": tuning_score,  # chosen on the same folds it is scored on
-        "threshold": cfg["threshold"],
+        "threshold": threshold,
+        "threshold_score_optimistic": threshold_score,  # same: the cut was chosen on these folds
         "cv_scores": cv_scores,                    # nested CV when tuned, plain CV otherwise
         "nested_cv": None if fold_scores is None else fold_scores.to_dict("records"),
     }
-    save_model(pipeline, meta, task, cfg)
-    write_json({"model_type": model_type, "config_hash": meta["config_hash"], "best_params": best_params},
-               best_params_path(task, cfg))
+    save_model(model, meta, task, cfg)
+    write_json({"model_type": model_type, "config_hash": meta["config_hash"], "best_params": best_params,
+                "threshold": threshold}, best_params_path(task, cfg))
 
 
 def train_time_series(task: str, cfg: dict, X, y, groups, dates):
     """
     Second opinion on an already tuned model: plain TimeSeriesSplit CV (with the train-test gap) of the
-    params saved by its stratified_group run. No tuning, no refit, and the saved model is left untouched.
+    params and threshold saved by its stratified_group run. No tuning, no refit, and the saved model is left
+    untouched.
     """
     model_type = cfg["models"][task]["type"]
     path = best_params_path(task, cfg)
+    best_params, threshold = {}, cfg["threshold"]["value"]
     if path.exists():
         with open(path) as f:
-            best_params = json.load(f)["best_params"]
-        print(f"Using tuned params from {path}: {best_params}")
+            saved = json.load(f)
+        best_params, threshold = saved["best_params"], saved.get("threshold", threshold)
+        print(f"Using tuned params from {path}: {best_params}, threshold {threshold:.3f}")
     else:
-        best_params = {}
-        print(f"WARNING: {path} not found (run with cv.strategy: stratified_group first). Using the config params.")
+        print(f"WARNING: {path} not found (run with cv.strategy: stratified_group first). "
+              f"Using the config params and threshold {threshold}.")
 
+    # Scored at the saved cut, the one the deployed model uses (no threshold tuning here)
+    model = FixedThresholdClassifier(build_pipeline(task, cfg).set_params(**best_params), threshold=threshold)
     folds = build_cv(cfg, dates)
-    fold_scores = cross_validate_folds(build_pipeline(task, cfg).set_params(**best_params),
-                                       X, y, None, folds, build_scorers(cfg["cv"]["metrics"]))
+    fold_scores = cross_validate_folds(model, X, y, None, folds, build_scorers(cfg["cv"]["metrics"]))
     fold_scores.insert(1, "train_rows", [len(train_idx) for train_idx, _ in folds])
     fold_scores.insert(2, "train_end", [dates.iloc[train_idx].max().date() for train_idx, _ in folds])
     fold_scores.insert(3, "val_start", [dates.iloc[val_idx].min().date() for _, val_idx in folds])
@@ -134,7 +145,7 @@ def train_time_series(task: str, cfg: dict, X, y, groups, dates):
                             f"{cfg['cv']['time_gap_days']}-day gap (mean ± std):")
 
     write_json({"model_type": model_type, "config_hash": config_hash(cfg), "best_params": best_params,
-                "cv_scores": cv_scores, "folds": fold_scores.to_dict("records")},
+                "threshold": threshold, "cv_scores": cv_scores, "folds": fold_scores.to_dict("records")},
                ROOT / cfg["output"]["results_dir"] / f"time_series_{task}_{model_type}.json")
 
 
