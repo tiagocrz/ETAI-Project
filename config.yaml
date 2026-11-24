@@ -88,9 +88,10 @@ models:
 
 # Optuna tuning (src/tuning.py). Search spaces are keyed by model type; params go to the "model" step.
 tuning:
-  enabled: false
-  n_trials: 50
+  enabled: true
+  n_trials: 20
   metric: "roc_auc"                         # one of cv.metrics
+  sampler: "tpe"   # Opções: "tpe", "random", "cmaes", "grid"
   search_spaces:
     random_forest:
       n_estimators: {type: int, low: 100, high: 500}
